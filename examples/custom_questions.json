@@ -1,0 +1,8 @@
+{
+  "is_question": {
+    "type": "noul",
+    "instructions": "Is the user asking a question (vs giving an order)?",
+    "true": "Question seeking information",
+    "false": "Command or statement"
+  }
+}
