@@ -10,12 +10,13 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 
 | Layer | Role |
 |-------|------|
-| **Jev** | Cheap intent gate before a turn |
+| **Jev intent** | Cheap gate before a turn |
+| **Jev compact** | Drop/truncate stale **tool** noise (text stays verbatim) |
 | **Config files** | Stable IDs and how-tos (calendar ids, allowlists) |
 | **Memory (Honcho, etc.)** | People, preferences, projects, “what did we decide” |
 | **Main LLM** | Reasoning + tools when the route needs it |
 
-**Token savings** come from skipping long tool/memory *tours* on clear `calendar` / `mail` / `status` asks — not from turning memory off.
+**Token savings** come from (1) skipping long tool/memory *tours* on clear `calendar` / `mail` / `status` asks, and (2) pruning old tool results before the next model call — not from turning memory off.
 
 - `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
@@ -72,6 +73,19 @@ Exit codes: `0` ok · `2` API/config error · `3` low confidence (when `--min-co
 | `intent` | Route: calendar / mail / status / research / complex |
 | `approval` | Is this shell command risky enough to escalate? |
 | `mail_triage` | Invoice / deadline / contract / ignore |
+
+## Compaction (tool history)
+
+Inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction). Does **not** summarize: user/assistant text stays verbatim; only tool calls/results may be dropped or truncated.
+
+```bash
+python3 scripts/jev_compact.py \
+  --messages-file examples/compact_sample.json \
+  --stats --decisions \
+  --out /tmp/out.json
+```
+
+Use when a Hermes session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes built-in summary.
 
 ## Pitfalls
 

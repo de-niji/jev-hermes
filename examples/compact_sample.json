@@ -1,0 +1,52 @@
+[
+  {
+    "role": "user",
+    "content": "Check disk space and list /tmp, then tell me if anything looks wrong."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_1",
+        "type": "function",
+        "function": {
+          "name": "terminal",
+          "arguments": "{\"command\": \"df -h\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_1",
+    "content": "Filesystem Size Used Avail Use% Mounted on\n/dev/nvme0n1p4 384G 20G 345G 6% /\n"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_2",
+        "type": "function",
+        "function": {
+          "name": "terminal",
+          "arguments": "{\"command\": \"ls /tmp\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_2",
+    "content": "old-cache\nscratch\n"
+  },
+  {
+    "role": "user",
+    "content": "Thanks — now just confirm the root filesystem free space again."
+  },
+  {
+    "role": "assistant",
+    "content": "Root has about 345G free (6% used). Nothing concerning from the earlier listing."
+  }
+]

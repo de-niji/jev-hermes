@@ -1,13 +1,13 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage). Use before expensive agent loops."
-version: 0.1.2
+version: 0.2.0
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [jev, typesafe, routing, openrouter, cost, honcho]
+    tags: [jev, typesafe, routing, openrouter, cost, honcho, compaction]
     related_skills: []
 ---
 
@@ -19,12 +19,18 @@ OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
 
 **Not a memory replacement.** Keep Honcho (or any memory provider) fully on. Jev only decides *whether this turn* needs a memory search / full agent loop.
 
+## Two jobs
+
+1. **Intent routing** (`jev_decide.py`) — classify the next user message before a full agent tour  
+2. **Tool-history compaction** (`jev_compact.py`) — drop/truncate stale tool calls/results without LLM summarization (inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction))
+
 ## When to use
 
 - Classify user intent before a long Hermes turn
 - Pre-filter risky shell / approval cases
 - Triage mail subjects (invoice / deadline / ignore)
 - Gate crons (“is a full brief worth it?”)
+- When context is large: compact tool noise, keep user/assistant text verbatim
 
 Do **not** use for writing replies, code, or multi-step tool plans.
 
@@ -50,7 +56,7 @@ Memory still **persists** messages in the background on every turn.
 - Keep `state` small. For `mail_triage`: subject + snippet only.
 - Never paste API keys into chat.
 
-## Commands
+## Commands — intent
 
 ```bash
 python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state "<user message>" --preset intent --brief
@@ -59,6 +65,23 @@ python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state-file /tmp/mail
 ```
 
 `--brief` → one line. `--pretty` → full JSON.
+
+## Commands — compact
+
+Input: JSON array of OpenAI-style chat messages (Hermes transcript dump).
+
+```bash
+python3 /opt/data/skills/devops/jev/scripts/jev_compact.py \
+  --messages-file /tmp/messages.json \
+  --out /tmp/messages.compact.json \
+  --stats --decisions \
+  --min-reduction 0.25
+```
+
+- Exit `0` = compacted OK  
+- Exit `4` = reduction below `--min-reduction` (caller should keep original / fall back to Hermes summary)  
+- Pins first message + newest `--preserve-recent` (default 6)  
+- Per old tool pair: keep call? keep full result? → keep / truncate result / drop both  
 
 ## Pitfalls
 
