@@ -4,6 +4,23 @@ Tiny Hermes skill that calls **TypeSafe Jev** (System One) through OpenRouter’
 
 Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. Use it to **route or gate** expensive Hermes agent turns.
 
+## Architecture: router, not memory
+
+Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enabled.
+
+| Layer | Role |
+|-------|------|
+| **Jev** | Cheap intent gate before a turn |
+| **Config files** | Stable IDs and how-tos (calendar ids, allowlists) |
+| **Memory (Honcho, etc.)** | People, preferences, projects, “what did we decide” |
+| **Main LLM** | Reasoning + tools when the route needs it |
+
+**Token savings** come from skipping long tool/memory *tours* on clear `calendar` / `mail` / `status` asks — not from turning memory off.
+
+- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
+- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
+- Memory providers still **write** in the background either way  
+
 | | |
 |---|---|
 | OpenRouter model | `typesafe/jev-1.13` (override with `JEV_MODEL`) |
@@ -66,7 +83,7 @@ See `SKILL.md`. Pattern: call Jev first on short user text; only start the full 
 
 ## Privacy / ZDR
 
-Confirm on OpenRouter whether `typesafe/jev-*` honors `data_collection: deny` for your account before sending private mail/calendar text. If not, keep Jev for non-sensitive routing only, or call TypeSafe directly under their DPA.
+If your OpenRouter account routes `typesafe/jev-*` under zero-data-retention, Jev is fine for the same traffic class as your other ZDR models. Otherwise keep private mail/calendar text out of `state`, or use TypeSafe under their DPA.
 
 ## License
 

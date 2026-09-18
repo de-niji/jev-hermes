@@ -1,13 +1,13 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage). Use before expensive agent loops."
-version: 0.1.1
+version: 0.1.2
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [jev, typesafe, routing, openrouter, cost]
+    tags: [jev, typesafe, routing, openrouter, cost, honcho]
     related_skills: []
 ---
 
@@ -16,6 +16,8 @@ metadata:
 Call **Jev** for cheap, typed decisions. It does **not** generate chat or run tools.
 
 OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
+
+**Not a memory replacement.** Keep Honcho (or any memory provider) fully on. Jev only decides *whether this turn* needs a memory search / full agent loop.
 
 ## When to use
 
@@ -28,17 +30,19 @@ Do **not** use for writing replies, code, or multi-step tool plans.
 
 ## Ops rule: route first
 
-Before memory exploration or multi-tool tours, run one flat intent call (`--brief`). Cost is typically ~$0.00002.
+Before memory *exploration* or multi-tool tours, run one flat intent call (`--brief`). Cost is typically ~$0.00002.
 
 | `route` | then |
 |---|---|
-| `calendar` | only flat calendar list calls |
-| `mail` | only flat gmail search/get |
-| `status` | only uptime/status CLI |
+| `calendar` | config files for IDs OK; only flat calendar list calls; **no** memory search |
+| `mail` | only flat gmail search/get; **no** memory search |
+| `status` | only uptime/status CLI; **no** memory search |
 | `research` | short web path (1–2 searches) |
-| `complex` / confidence &lt; 0.7 | full agent loop |
+| `complex` / confidence &lt; 0.7 / people-prefs | memory + full agent loop |
 
 `needs_tools` &lt; 0.5 and clearly answerable → reply directly, no tools.
+
+Memory still **persists** messages in the background on every turn.
 
 ## Rules
 
