@@ -30,7 +30,7 @@ docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
 # from skill dir
 python3 scripts/jev_decide.py \
   --state "What's on my calendar tomorrow?" \
-  --preset intent
+  --preset intent --brief
 
 python3 scripts/jev_decide.py \
   --state '{"cmd":"rm -rf /","why":"cleanup"}' \
@@ -55,6 +55,10 @@ Exit codes: `0` ok · `2` API/config error · `3` low confidence (when `--min-co
 | `intent` | Route: calendar / mail / status / research / complex |
 | `approval` | Is this shell command risky enough to escalate? |
 | `mail_triage` | Invoice / deadline / contract / ignore |
+
+## Pitfalls
+
+- `choice` options must be under `criteria` as a **record** (option → description). Arrays in `criteria` are for `score` only. Wrong shapes return HTTP 400.
 
 ## Hermes usage
 

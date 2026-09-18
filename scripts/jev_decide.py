@@ -24,11 +24,13 @@ PRESETS: dict[str, dict[str, Any]] = {
             "instructions": (
                 "Where should this user request go? Pick the best single bucket."
             ),
-            "calendar": "Schedule, meetings, weekly plan, lectures, class timetable",
-            "mail": "Email, inbox, invoices, send/read mail",
-            "status": "Service health, uptime monitors, is X up?",
-            "research": "Look something up, news, explain a topic",
-            "complex": "Multi-step work, coding, ops changes, unclear or mixed",
+            "criteria": {
+                "calendar": "Schedule, meetings, weekly plan, lectures, class timetable",
+                "mail": "Email, inbox, invoices, send/read mail",
+                "status": "Service health, uptime monitors, is X up?",
+                "research": "Look something up, news, explain a topic",
+                "complex": "Multi-step work, coding, ops changes, unclear or mixed",
+            },
         },
         "needs_tools": {
             "type": "noul",
@@ -57,11 +59,13 @@ PRESETS: dict[str, dict[str, Any]] = {
         "kind": {
             "type": "choice",
             "instructions": "Classify this email for a personal-assistant morning brief.",
-            "invoice": "Rechnung, invoice, payment due, Zahlungsaufforderung",
-            "deadline": "Frist, deadline, Anmeldung, Prüfungsanmeldung, due date",
-            "contract": "Vertrag, contract, NDA, agreement to sign",
-            "ignore": "Newsletter, promo, social, no action needed",
-            "other": "Personal or work mail that is none of the above",
+            "criteria": {
+                "invoice": "Rechnung, invoice, payment due, Zahlungsaufforderung",
+                "deadline": "Frist, deadline, Anmeldung, Prüfungsanmeldung, due date",
+                "contract": "Vertrag, contract, NDA, agreement to sign",
+                "ignore": "Newsletter, promo, social, no action needed",
+                "other": "Personal or work mail that is none of the above",
+            },
         },
         "action_needed": {
             "type": "noul",
@@ -145,6 +149,24 @@ def decide(state: Any, questions: dict[str, Any], model: str) -> dict[str, Any]:
         raise SystemExit(f"HTTP {e.code}: {err}") from e
 
 
+def _brief(out: dict[str, Any]) -> str:
+    answers = out.get("answers") or {}
+    parts: list[str] = []
+    for name, v in answers.items():
+        if not isinstance(v, dict):
+            continue
+        if v.get("type") == "choice":
+            parts.append(f"{name}={v.get('choice')}({v.get('confidence')})")
+        elif v.get("type") == "noul":
+            parts.append(f"{name}={v.get('noul')}")
+        elif v.get("type") == "score":
+            parts.append(f"{name}={v.get('score')}({v.get('confidence')})")
+    cost = (out.get("usage") or {}).get("cost")
+    if cost is not None:
+        parts.append(f"cost={cost}")
+    return " ".join(parts)
+
+
 def _min_confidence(payload: dict[str, Any]) -> float | None:
     answers = payload.get("answers") or payload.get("result") or {}
     if not isinstance(answers, dict):
@@ -173,13 +195,21 @@ def main() -> int:
         help="Exit 3 if any answer confidence is below this",
     )
     p.add_argument("--pretty", action="store_true")
+    p.add_argument(
+        "--brief",
+        action="store_true",
+        help="One flat line: route=calendar(1.0) needs_tools=0.91 cost=...",
+    )
     args = p.parse_args()
 
     state = _read_state(args)
     questions = _read_questions(args)
     out = decide(state, questions, args.model)
-    text = json.dumps(out, indent=2 if args.pretty else None, ensure_ascii=False)
-    print(text)
+    if args.brief:
+        print(_brief(out))
+    else:
+        text = json.dumps(out, indent=2 if args.pretty else None, ensure_ascii=False)
+        print(text)
 
     if args.min_confidence is not None:
         mc = _min_confidence(out)
