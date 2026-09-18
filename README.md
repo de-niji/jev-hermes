@@ -16,17 +16,30 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 | **Memory (Honcho, etc.)** | People, preferences, projects, “what did we decide” |
 | **Main LLM** | Reasoning + tools when the route needs it |
 
-**Token savings** come from (1) skipping long tool/memory *tours* on clear `calendar` / `mail` / `status` asks, and (2) pruning old tool results before the next model call — not from turning memory off.
-
-- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
-- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
-- Memory providers still **write** in the background either way  
+**The 100x is not “swap the LLM for Jev.”** It is deleting calls that never needed a language model — which-tool-next, is-this-spam, is-this-chunk-relevant, does-this-need-a-human, is-this-diff-risky. Those are if-statements outsourced to a frontier model.
 
 | | |
 |---|---|
 | OpenRouter model | `typesafe/jev-1.13` (override with `JEV_MODEL`) |
 | Endpoint | `POST https://openrouter.ai/api/alpha/decisions` |
 | Price (approx.) | ~$0.042 / M input · **$0** output |
+
+## Playbook (where to put it)
+
+1. **Typed question** — `choice` (≤255 options), `score` (2–10 levels), `noul` (0–1). Not free-form.
+2. **Batch** — many questions in one call run in parallel; output tokens are free. Ask everything you might need.
+3. **Threshold on confidence, not the answer** — &lt;0.5 escalate to big model/human; ≥0.85 before anything irreversible.
+4. **Never invent options** — build the candidate list in code (tools, DOM, retriever, allowlists), then let Jev pick.
+5. **In the loop, not beside it** — router (cheap model / skip tour) → gate (before tool runs) → judge (after output). Compaction is the cheap win tonight.
+6. **Compaction first for bills** — score tool pairs, drop dead ones, keep survivors **verbatim** (no lossy summary).
+
+Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / mail triage · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (Lunar prompt / future preset).
+
+- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
+- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
+- Memory providers still **write** in the background either way  
+
+Honest limits: text only (no images/audio). Wins on narrow, well-specified decisions — most of what an agent does all day — not on broad chat benchmarks.
 
 ## Install on Hermes
 
@@ -94,6 +107,22 @@ Use when a Hermes session is long and full of old tool dumps. If `--min-reductio
 ## Hermes usage
 
 See `SKILL.md`. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
+
+## Pairing with Honcho (optional host tips)
+
+Jev does not configure Honcho. On a Hermes host, the big token cost is usually **uncapped every-turn memory inject**, not the Jev gate.
+
+Recommended host knobs (in your local `honcho.json` — **do not commit personal peer/workspace names**):
+
+| Knob | Suggested | Why |
+|------|-----------|-----|
+| `contextTokens` | `1500`–`2500` | Cap auto-injected context |
+| `contextCadence` | `4`–`8` | Refresh base context less often |
+| `injection.sessionStart` | `["summary","peerCard"]` | Skip heavy representation blocks |
+| `dialecticCadence` | `≥8` | Keep dialectic sparse |
+| `dialecticReasoningLevel` | `minimal` | Cheap dialectic |
+
+Keep `recallMode: hybrid` if you still want tools on `complex` turns. Live PA routing notes stay on the host workspace, not in this repo.
 
 ## Privacy / ZDR
 

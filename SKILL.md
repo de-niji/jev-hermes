@@ -1,7 +1,7 @@
 ---
 name: jev
-description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage). Use before expensive agent loops."
-version: 0.2.0
+description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage/compaction). Use to delete LLM calls that are just if-statements."
+version: 0.2.1
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
@@ -26,17 +26,22 @@ OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
 
 ## When to use
 
-- Classify user intent before a long Hermes turn
-- Pre-filter risky shell / approval cases
-- Triage mail subjects (invoice / deadline / ignore)
+Replace frontier-model “picks” with typed Jev questions:
+
+- which route / tools next (`intent`)
+- is this shell risky (`approval`)
+- is this mail spam / invoice / deadline (`mail_triage`)
+- is this tool call/result still needed (`compact`)
 - Gate crons (“is a full brief worth it?”)
-- When context is large: compact tool noise, keep user/assistant text verbatim
 
 Do **not** use for writing replies, code, or multi-step tool plans.
 
-## Ops rule: route first
+## Ops rule: put Jev in the loop
 
-Before memory *exploration* or multi-tool tours, run one flat intent call (`--brief`). Cost is typically ~$0.00002.
+1. **Router** — before memory exploration / multi-tool tours: `--preset intent --brief` (~$0.00002).
+2. **Gate** — before irreversible tools: `--preset approval` (or custom `choice` from a code-built allowlist).
+3. **Compact** — when context is fat with old tool dumps: `jev_compact.py` (verbatim text, drop dead tools).
+4. **Batch** questions in one call; **threshold confidence** (&lt;0.5 escalate, ≥0.85 for irreversible). Never invent `choice` options in the prompt — build them in code/config.
 
 | `route` | then |
 |---|---|
@@ -55,6 +60,7 @@ Memory still **persists** messages in the background on every turn.
 - Flat commands only (no `JEV=…; $JEV` — Tirith).
 - Keep `state` small. For `mail_triage`: subject + snippet only.
 - Never paste API keys into chat.
+- Options come from code/config, not from the model inventing candidates.
 
 ## Commands — intent
 
