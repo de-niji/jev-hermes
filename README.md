@@ -33,7 +33,7 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 5. **In the loop, not beside it** — router (cheap model / skip tour) → gate (before tool runs) → judge (after output). Compaction is the cheap win tonight.
 6. **Compaction first for bills** — score tool pairs, drop dead ones, keep survivors **verbatim** (no lossy summary).
 
-Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / mail triage · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (Lunar prompt / future preset).
+Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / mail triage · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (agent prompt / future preset).
 
 - `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
