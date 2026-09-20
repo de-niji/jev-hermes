@@ -11,6 +11,7 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 | Layer | Role |
 |-------|------|
 | **Jev intent** | Cheap gate before a turn |
+| **Jev mail triage** | Bucket inbox / finance candidates before the agent reads bodies |
 | **Jev compact** | Drop/truncate stale **tool** noise (text stays verbatim) |
 | **Config files** | Stable IDs and how-tos (calendar ids, allowlists) |
 | **Memory (Honcho, etc.)** | People, preferences, projects, “what did we decide” |
@@ -33,7 +34,7 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 5. **In the loop, not beside it** — router (cheap model / skip tour) → gate (before tool runs) → judge (after output). Compaction is the cheap win tonight.
 6. **Compaction first for bills** — score tool pairs, drop dead ones, keep survivors **verbatim** (no lossy summary).
 
-Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / mail triage · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (agent prompt / future preset).
+Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / `jev_mail_triage.py` · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (agent prompt / future preset).
 
 - `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
@@ -100,9 +101,23 @@ python3 scripts/jev_compact.py \
 
 Use when a Hermes session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes built-in summary.
 
+## Mail triage
+
+`scripts/jev_mail_triage.py` classifies Gmail via the Hermes Google Workspace skill. Options are fixed in code (`inbox` / `belege` presets). Promo/social labels short-circuit with no model call. Bodies stay local (truncated) so they never enter the main agent context.
+
+```bash
+python3 scripts/jev_mail_triage.py --preset inbox --query "newer_than:2d -in:chats" --max 20 --brief
+python3 scripts/jev_mail_triage.py --preset belege --query "newer_than:14d -in:chats" --max 30 --brief
+```
+
+Default output: `/tmp/jev_mail_triage/last_<preset>.json`. Wire into morning/finance crons on the host — **do not commit real inbox dumps or bench mail snapshots**.
+
+Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main model ~73 s / ~$0.013. See `SKILL.md` for pitfalls (criteria must name concrete failure modes).
+
 ## Pitfalls
 
 - `choice` options must be under `criteria` as a **record** (option → description). Arrays in `criteria` are for `score` only. Wrong shapes return HTTP 400.
+- Mail criteria: name concrete noise modes (device alerts, 2FA codes), not vague “automated notification”.
 
 ## Hermes usage
 

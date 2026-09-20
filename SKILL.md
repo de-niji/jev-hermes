@@ -1,13 +1,13 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage/compaction). Use to delete LLM calls that are just if-statements."
-version: 0.2.1
+version: 0.3.0
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [jev, typesafe, routing, openrouter, cost, honcho, compaction]
+    tags: [jev, typesafe, routing, openrouter, cost, honcho, compaction, mail]
     related_skills: []
 ---
 
@@ -19,10 +19,11 @@ OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
 
 **Not a memory replacement.** Keep Honcho (or any memory provider) fully on. Jev only decides *whether this turn* needs a memory search / full agent loop.
 
-## Two jobs
+## Three jobs
 
 1. **Intent routing** (`jev_decide.py`) — classify the next user message before a full agent tour  
-2. **Tool-history compaction** (`jev_compact.py`) — drop/truncate stale tool calls/results without LLM summarization (inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction))
+2. **Tool-history compaction** (`jev_compact.py`) — drop/truncate stale tool calls/results without LLM summarization (inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction))  
+3. **Mail classification** (`jev_mail_triage.py`) — bucket inbox mail before any frontier model sees it
 
 ## When to use
 
@@ -30,7 +31,7 @@ Replace frontier-model “picks” with typed Jev questions:
 
 - which route / tools next (`intent`)
 - is this shell risky (`approval`)
-- is this mail spam / invoice / deadline (`mail_triage`)
+- is this mail spam / invoice / deadline (`mail_triage` / `jev_mail_triage.py`)
 - is this tool call/result still needed (`compact`)
 - Gate crons (“is a full brief worth it?”)
 
@@ -40,8 +41,9 @@ Do **not** use for writing replies, code, or multi-step tool plans.
 
 1. **Router** — before memory exploration / multi-tool tours: `--preset intent --brief` (~$0.00002).
 2. **Gate** — before irreversible tools: `--preset approval` (or custom `choice` from a code-built allowlist).
-3. **Compact** — when context is fat with old tool dumps: `jev_compact.py` (verbatim text, drop dead tools).
-4. **Batch** questions in one call; **threshold confidence** (&lt;0.5 escalate, ≥0.85 for irreversible). Never invent `choice` options in the prompt — build them in code/config.
+3. **Mail** — classify with `jev_mail_triage.py` so bodies never enter the main agent context.
+4. **Compact** — when context is fat with old tool dumps: `jev_compact.py` (verbatim text, drop dead tools).
+5. **Batch** questions in one call; **threshold confidence** (&lt;0.5 escalate, ≥0.85 for irreversible). Never invent `choice` options in the prompt — build them in code/config.
 
 | `route` | then |
 |---|---|
@@ -58,7 +60,7 @@ Memory still **persists** messages in the background on every turn.
 ## Rules
 
 - Flat commands only (no `JEV=…; $JEV` — Tirith).
-- Keep `state` small. For `mail_triage`: subject + snippet only.
+- Keep `state` small. For single-mail decide: subject + snippet only.
 - Never paste API keys into chat.
 - Options come from code/config, not from the model inventing candidates.
 
@@ -71,6 +73,40 @@ python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state-file /tmp/mail
 ```
 
 `--brief` → one line. `--pretty` → full JSON.
+
+## Commands — mail triage
+
+One decision per message, options fixed in code, Gmail promo/social labels short-circuit to `noise`/`info` with **no model call**. Bodies are fetched and truncated locally so they never enter the main agent context.
+
+Requires Hermes Google Workspace skill (`google_api.py`) for Gmail list/get.
+
+Two presets: `inbox` (urgent_reply / reply / action_no_reply / waiting / reference / noise) and `belege` (beleg / mahnung / vertrag / info / unclear — gate before an expensive finance/PDF pipeline).
+
+```bash
+python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
+  --preset inbox --query "newer_than:2d -in:chats" --max 20 \
+  --out /tmp/jev_mail_triage/last_inbox.json --brief
+
+python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
+  --preset belege --query "newer_than:14d -in:chats" --max 30 --brief
+```
+
+- Output JSON: `rows[]`, `needs_attention[]`, `escalate[]` (conf &lt; `--min-confidence`, default 0.5), `counts`, `cost_usd`.
+- `source=label_fastpath` rows cost nothing; `source=jev` rows ~$0.00002 each.
+- Callers should only escalate `escalate[]` ids to a frontier model — that is the cheap hybrid.
+- `--preset belege` also catches receipts with **no PDF attachment** (inline invoices) that a `has:attachment filename:pdf` scan misses.
+
+### Measured A/B (scrubbed)
+
+Frozen 20-mail snapshot, subject + 600 chars body (~2.3k tokens of mail text). Jev vs main chat model (per-mail and one batch). Aggregate only — no mail content in this repo.
+
+| Arm | Wall clock | Model cost | vs Jev |
+|---|---|---|---|
+| Jev (20 decisions) | ~8.6 s | ~$0.0007 | — |
+| Main model, 1 call/mail | ~73 s | ~$0.013 | ~18× cost, ~8× slower |
+| Main model, 1 batch | ~65 s | ~$0.0013 | ~1.9× cost, ~7× slower |
+
+Real win: **zero mail text in the agent context**, plus wall clock. Criteria must name concrete failure modes (door/sensor/Home Assistant alerts, login/2FA codes) — vague “automated notification” pushed those into action buckets above the 0.5 confidence gate.
 
 ## Commands — compact
 
@@ -91,6 +127,8 @@ python3 /opt/data/skills/devops/jev/scripts/jev_compact.py \
 
 ## Pitfalls
 
+- Criteria text must name the concrete failure mode ("automated device alert — door, sensor, Home Assistant", "login/2FA code"), not a generic label like "automated notification".
 - `choice` options must live under `criteria` as a **record** `{option: description}`.
 - `score` uses `criteria` as an **array** of level labels.
+- `noul` answers come back as a **probability float** (`{"type":"noul","noul":0.25}`), not a boolean — threshold at 0.5 explicitly.
 - Flat option keys at question level → `HTTP 400` on `questions.*.criteria`.
