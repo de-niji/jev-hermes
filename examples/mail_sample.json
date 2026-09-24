@@ -1,5 +1,5 @@
 {
-  "subject": "Rechnung Nr. 10442 — Zahlbar bis 30.09.2026",
-  "from": "buchhaltung@example.com",
-  "snippet": "Anbei die Rechnung für September. Bitte überweisen Sie den Betrag bis zum 30.09.2026."
+  "subject": "Invoice No. 10442 — due by 2026-09-30",
+  "from": "billing@example.com",
+  "snippet": "Please find attached the invoice for September. Kindly transfer the amount by 2026-09-30."
 }
