@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jev_decide as jd  # noqa: E402  (shares key loading + HTTP path)
 
 GAPI = os.environ.get(
-    "JEV_GAPI", "/opt/data/skills/productivity/google-workspace/scripts/google_api.py"
+    "JEV_GAPI", str(jd.HERMES_HOME / "skills/productivity/google-workspace/scripts/google_api.py")
 )
 
 # Options live here (code/config), never invented by the model.
@@ -220,7 +220,7 @@ def needs_attention(row: dict, preset: str) -> bool:
     return bool((sig.get("action_needed") or {}).get("yes"))
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Jev mail triage")
     p.add_argument("--preset", choices=sorted(PRESETS), default="inbox")
     p.add_argument("--input", help="JSON array of mails ('-' = stdin) instead of Gmail")
@@ -234,8 +234,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", default=None)
     p.add_argument("--csv", default=None, help="append per-mail rows to this CSV")
     p.add_argument("--brief", action="store_true")
-    args = p.parse_args(argv)
+    return p
 
+
+def run(args: argparse.Namespace, mails: list[dict] | None = None) -> dict:
+    """Triage and write --out (and --csv). ``mails`` skips --input/Gmail (used by the Hermes plugin)."""
     preset = PRESETS[args.preset]
     qs = preset["questions"]
     fastpath_label = "noise" if args.preset == "inbox" else "info"
@@ -244,7 +247,10 @@ def main(argv: list[str] | None = None) -> int:
 
     jd._load_key()  # fail fast (exit 2) instead of one error row per mail
     t0 = time.time()
-    if args.input:
+    inline = mails is not None or bool(args.input)
+    if mails is not None:
+        mails = [m for m in mails if isinstance(m, dict)][: args.max]
+    elif args.input:
         mails = load_input(args.input)[: args.max]
     else:
         mails = list_mail(args.query, args.max)
@@ -283,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             "body": "",
         }
         if not args.no_body:
-            if args.input:
+            if inline:
                 state["body"] = clip(m.get("body") or "", args.body_chars)
             else:
                 state["body"] = body_head(str(m.get("id")), args.body_chars)
@@ -313,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "preset": args.preset,
-        "query": None if args.input else args.query,
+        "query": None if inline else args.query,
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "model": args.model,
         "mail_count": len(mails),
@@ -329,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     out_path = Path(args.out)
+    result["out"] = str(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -347,12 +354,17 @@ def main(argv: list[str] | None = None) -> int:
                             **{k: (json.dumps(r[k], ensure_ascii=False) if k == "signals" else r[k])
                                for k in ("id", "date", "from", "subject", "disposition",
                                          "confidence", "signals", "escalate", "source", "cost")}})
+    return result
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = run(args)
     if args.brief:
         print(f"preset={args.preset} mails={result['mail_count']} classified={result['classified']} "
               f"cost=${result['cost_usd']:.6f} per_mail=${result['cost_per_mail_usd']:.8f} "
-              f"{result['seconds']}s out={out_path}")
-        print("counts=" + " ".join(f"{k}:{v}" for k, v in sorted(counts.items())))
+              f"{result['seconds']}s out={result['out']}")
+        print("counts=" + " ".join(f"{k}:{v}" for k, v in sorted(result["counts"].items())))
         for r in result["needs_attention"]:
             flag = "!" if r["escalate"] else " "
             sig = " ".join(f"{k}={v['p']}" for k, v in (r["signals"] or {}).items() if v["p"] is not None)

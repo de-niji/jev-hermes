@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 EXAMPLES = ROOT / "examples"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(ROOT))  # hermes_tools.py (plugin handlers)
 
 # Never touch the real API: a file:// URL makes urllib fail locally with URLError.
 OFFLINE_URL = "file:///nonexistent/jev-decisions"

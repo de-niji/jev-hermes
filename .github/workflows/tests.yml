@@ -20,6 +20,30 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Compile
-        run: python -m py_compile scripts/*.py
+        run: python -m py_compile scripts/*.py *.py
       - name: Unit tests (offline, no API key needed)
         run: python -m unittest discover -s tests -v
+
+  hermes:
+    # Loads the plugin in a real Hermes Agent: install scan verdict, tool/skill registration,
+    # skills-installer file list. Pinned so upstream changes are picked up deliberately.
+    runs-on: ubuntu-latest
+    env:
+      HERMES_REF: b61dcbd9a22c2e2a38b76a4833302ca7f330801c
+    steps:
+      # Side by side, so the install scan only sees this repo.
+      - uses: actions/checkout@v4
+        with:
+          path: jev-hermes
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.HERMES_REF }}
+          path: hermes-agent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hermes Agent
+        run: pip install -e ./hermes-agent
+      - name: Plugin loads in Hermes
+        run: python jev-hermes/tests/hermes_integration.py
