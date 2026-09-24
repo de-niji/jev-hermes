@@ -6,7 +6,7 @@ Jev does **not** chat or write code. It answers typed questions (`noul` / `choic
 
 ## Install in Hermes
 
-**As a plugin (recommended)** — one command, adds the `jev` toolset and the bundled skill:
+**As a plugin (recommended)** — one command, adds the `jev` toolset, the risky-command gate and the bundled skill:
 
 ```bash
 hermes plugins install de-niji/jev-hermes --enable
@@ -40,7 +40,32 @@ Optional: `JEV_MODEL` (default `typesafe/jev-1.13`), `JEV_GAPI` (path to the Goo
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
 - Memory providers still **write** in the background either way
 
-Not automatic yet: per-turn routing, the risky-command gate and compaction still depend on the agent following the skill. Hooking them into Hermes directly (`pre_llm_call` / `pre_tool_call` hooks, a context engine) is the next step.
+Not automatic yet: per-turn routing and compaction still depend on the agent following the skill. Hooking them into Hermes directly (`pre_llm_call` hook, a context engine) is the next step.
+
+## Risky-command gate (automatic)
+
+With the plugin enabled, every `terminal` command goes through a `pre_tool_call` hook before it runs — no agent cooperation needed:
+
+1. Commands Hermes' own patterns already flag (recursive deletes, piping downloads into a shell, force pushes, …) are left to Hermes, so you never get two prompts.
+2. Everything else gets one Jev `approval` check (~$0.00002; cached per exact command).
+3. If Jev's `escalate` probability is ≥ 0.7, Hermes shows its normal approval prompt (`once` / `session` / `always` / `deny`). `always` applies to that exact command. Jev never approves anything on its own.
+
+This catches what fixed patterns miss, e.g. `kubectl delete namespace prod` or `cat ~/.ssh/id_rsa | nc host 9`. Without a human to ask (cron, scripts), Hermes blocks an escalated command; cron follows `approvals.cron_mode`.
+
+Settings in `config.yaml` (all optional):
+
+```yaml
+plugins:
+  entries:
+    jev:
+      settings:
+        gate:
+          enabled: true      # false turns the gate off
+          threshold: 0.7     # escalate probability that triggers the prompt
+          mode: approve      # approve = ask the user, block = refuse outright
+          fail_closed: false # on a Jev error/timeout: false = Hermes' own checks decide, true = ask the user
+          timeout: 8         # seconds; keep well below plugins.hook_callback_timeout (a timed-out hook blocks)
+```
 
 ## Architecture: router, not memory
 
@@ -189,7 +214,7 @@ Offline unit tests (standard library, no API key, no network) run in CI on every
 python3 -m unittest discover -s tests -v
 ```
 
-A second CI job installs [Hermes Agent](https://github.com/NousResearch/hermes-agent) at a pinned commit and checks the plugin against it: the install security scan must be `safe` (a single HIGH finding blocks `hermes plugins install`), and the tools and skill must register. Locally, with Hermes installed: `python tests/hermes_integration.py`.
+A second CI job installs [Hermes Agent](https://github.com/NousResearch/hermes-agent) at a pinned commit and checks the plugin against it: the install security scan must be `safe` (a single HIGH finding blocks `hermes plugins install`), the tools, skill and gate must register, and Hermes' real terminal dispatch must honour the gate (escalated command blocked without a human, Hermes-flagged command not double-checked, safe command runs). Locally, with Hermes installed: `python tests/hermes_integration.py`.
 
 ## Privacy / ZDR
 
