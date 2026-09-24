@@ -82,12 +82,17 @@ PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+# Hermes home: ~/.hermes by default, /opt/data in the official Docker image.
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
 # Checked in order when the key is not in the environment: repo .env, then Hermes locations.
-ENV_FILES: tuple[Path, ...] = (
+# (Hermes strips OPENROUTER_API_KEY from the env of scripts it runs, so the .env fallback matters.)
+ENV_FILES: tuple[Path, ...] = tuple(dict.fromkeys((
     Path(__file__).resolve().parents[1] / ".env",
+    HERMES_HOME / ".env",
     Path.home() / ".hermes" / ".env",
     Path("/opt/data/.env"),
-)
+)))
 
 
 def _load_key() -> str:

@@ -1,7 +1,7 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage/compaction). Use to delete LLM calls that are just if-statements."
-version: 0.4.0
+version: 0.5.0
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
@@ -18,6 +18,11 @@ Call **Jev** for cheap, typed decisions. It does **not** generate chat or run to
 OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
 
 **Not a memory replacement.** Keep Honcho (or any memory provider) fully on. Jev only decides *whether this turn* needs a memory search / full agent loop.
+
+**Plugin tools first.** When the `jev` plugin is enabled (`hermes plugins install de-niji/jev-hermes --enable`), call the `jev_decide` and `jev_mail_triage` tools directly. The commands below are the fallback when only this skill is installed.
+
+Files (paths relative to this skill; `${HERMES_SKILL_DIR}` in the commands):
+`scripts/jev_decide.py` · `scripts/jev_mail_triage.py` · `scripts/jev_compact.py` · `examples/mail_sample.json` · `examples/mails_sample.json` · `examples/custom_questions.json` · `examples/compact_sample.json`
 
 ## Three jobs
 
@@ -67,9 +72,9 @@ Memory still **persists** messages in the background on every turn.
 ## Commands — intent
 
 ```bash
-python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state "<user message>" --preset intent --brief
-python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state '{"cmd":"<command>"}' --preset approval --brief
-python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state-file /tmp/mail.json --preset mail_triage --brief
+python3 ${HERMES_SKILL_DIR}/scripts/jev_decide.py --state "<user message>" --preset intent --brief
+python3 ${HERMES_SKILL_DIR}/scripts/jev_decide.py --state '{"cmd":"<command>"}' --preset approval --brief
+python3 ${HERMES_SKILL_DIR}/scripts/jev_decide.py --state-file /tmp/mail.json --preset mail_triage --brief
 ```
 
 `--brief` → one line. `--pretty` → full JSON.
@@ -83,11 +88,11 @@ Requires Hermes Google Workspace skill (`google_api.py`) for Gmail list/get (ove
 Two presets: `inbox` (urgent_reply / reply / action_no_reply / waiting / reference / noise) and `receipts` (receipt / payment_issue / contract / info / unclear — gate before an expensive finance/PDF pipeline).
 
 ```bash
-python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
+python3 ${HERMES_SKILL_DIR}/scripts/jev_mail_triage.py \
   --preset inbox --query "newer_than:2d -in:chats" --max 20 \
   --out /tmp/jev_mail_triage/last_inbox.json --brief
 
-python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
+python3 ${HERMES_SKILL_DIR}/scripts/jev_mail_triage.py \
   --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
 ```
 
@@ -114,7 +119,7 @@ Real win: **zero mail text in the agent context**, plus wall clock. Criteria mus
 Input: JSON array of OpenAI-style chat messages (Hermes transcript dump).
 
 ```bash
-python3 /opt/data/skills/devops/jev/scripts/jev_compact.py \
+python3 ${HERMES_SKILL_DIR}/scripts/jev_compact.py \
   --messages-file /tmp/messages.json \
   --out /tmp/messages.compact.json \
   --stats --decisions \

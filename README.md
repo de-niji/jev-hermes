@@ -1,32 +1,46 @@
 # jev-hermes
 
-**TypeSafe Jev for [Hermes Agent](https://github.com/NousResearch/hermes-agent).** A drop-in Hermes skill that hands cheap, typed decisions to Jev (System One) through OpenRouter’s Decisions API — so the expensive model only runs when it has to.
+**TypeSafe Jev for [Hermes Agent](https://github.com/NousResearch/hermes-agent).** A drop-in Hermes plugin (and skill) that hands cheap, typed decisions to Jev (System One) through OpenRouter’s Decisions API — so the expensive model only runs when it has to.
 
 Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. In Hermes it **routes** turns before the agent loop, **gates** risky commands, **compacts** old tool output and **triages** mail.
 
 ## Install in Hermes
 
+**As a plugin (recommended)** — one command, adds the `jev` toolset and the bundled skill:
+
 ```bash
-git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
-# or update: cd ~/jev-hermes && git pull
-
-# copy into the Hermes skills tree (adjust if your HERMES_HOME differs):
-docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
-docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
-
-# OPENROUTER_API_KEY in the Hermes env / .env
-# optional: JEV_MODEL=typesafe/jev-1.13
+hermes plugins install de-niji/jev-hermes --enable
+# update later: hermes plugins update jev
 ```
 
-The key is also read from `~/.hermes/.env` and `/opt/data/.env` when it is not in the environment.
+The agent then has two tools, no shell needed:
+
+| Tool | What it does |
+|------|--------------|
+| `jev_decide` | One typed decision: preset `intent` / `approval` / `mail_triage`, or custom `questions`. Returns answers + confidence. |
+| `jev_mail_triage` | Triage Gmail (Google Workspace skill) or passed-in mails; returns counts, `needs_attention` and `escalate` ids — **no mail bodies** in the agent context. |
+
+The reference skill is available as `jev:jev` (`skill_view("jev:jev")`). The tools only show up when an OpenRouter key is found: `OPENROUTER_API_KEY` in the environment or in `$HERMES_HOME/.env` (`~/.hermes/.env`, `/opt/data/.env` in Docker).
+
+**As a plain skill (manual)** — the agent runs the scripts through `terminal` instead of calling tools. `hermes skills install` does not work for this repo: its scanner rejects any skill whose scripts read API keys, which Jev has to. Copy it instead, e.g. in Docker:
+
+```bash
+git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
+docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
+docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
+```
+
+Optional: `JEV_MODEL` (default `typesafe/jev-1.13`), `JEV_GAPI` (path to the Google Workspace `google_api.py`, default under `$HERMES_HOME/skills/productivity/google-workspace/`).
 
 ## How Hermes uses it
 
-`SKILL.md` is the skill manifest Hermes loads; it tells the agent when to call which script. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
+`SKILL.md` tells the agent when to decide with Jev instead of reasoning it out: call `jev_decide` (or the script) on short user text first; only start the full agent loop when `intent=complex` or confidence is low.
 
 - `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
 - Memory providers still **write** in the background either way
+
+Not automatic yet: per-turn routing, the risky-command gate and compaction still depend on the agent following the skill. Hooking them into Hermes directly (`pre_llm_call` / `pre_tool_call` hooks, a context engine) is the next step.
 
 ## Architecture: router, not memory
 
@@ -71,7 +85,7 @@ python3 scripts/jev_decide.py \
   --preset intent --brief
 
 python3 scripts/jev_decide.py \
-  --state '{"cmd":"rm -rf /","why":"cleanup"}' \
+  --state '{"cmd":"git push --force origin main","why":"sync"}' \
   --preset approval
 
 python3 scripts/jev_decide.py \
@@ -174,6 +188,8 @@ Offline unit tests (standard library, no API key, no network) run in CI on every
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+A second CI job installs [Hermes Agent](https://github.com/NousResearch/hermes-agent) at a pinned commit and checks the plugin against it: the install security scan must be `safe` (a single HIGH finding blocks `hermes plugins install`), and the tools and skill must register. Locally, with Hermes installed: `python tests/hermes_integration.py`.
 
 ## Privacy / ZDR
 
