@@ -1,6 +1,6 @@
 name: jev
-version: 0.6.0
-description: "TypeSafe Jev for Hermes: cheap typed decisions via OpenRouter (route requests, judge risky commands, triage mail without reading bodies into context)."
+version: 0.7.0
+description: "TypeSafe Jev for Hermes: cheap typed decisions via OpenRouter (route requests, gate risky commands, relevance-based context compaction, triage mail without reading bodies into context)."
 author: jev-hermes contributors
 license: MIT
 homepage: https://github.com/de-niji/jev-hermes

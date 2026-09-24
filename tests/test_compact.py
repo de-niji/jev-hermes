@@ -13,7 +13,7 @@ def sample() -> list:
 
 
 def fake_jev(keep_call: float, keep_result: float):
-    def ask(state, questions, model):
+    def ask(state, questions, model, timeout=60):
         ans = {}
         for key in questions:
             ans[key] = noul(keep_call if key.startswith("call_") else keep_result)

@@ -526,6 +526,76 @@ def message_chars(message: dict[str, Any]) -> int:
     return total
 
 
+def _score(
+    messages: list[dict[str, Any]],
+    calls: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    model: str,
+    preserve: int,
+    max_state_tokens: int,
+    max_request_tokens: int,
+    goal: str,
+    timeout: float = 60,
+    ask=None,
+) -> tuple[dict[str, dict[str, float]], int, str, int]:
+    """Ask Jev keep-call / keep-result for ``candidates``: (answers by call id, state tokens, stage, requests)."""
+    if not candidates:
+        return {}, 0, "", 0
+    ask = ask or jev_ask
+    state, state_tokens, state_stage = fit_state(
+        messages, calls, max_state_tokens=max_state_tokens, preserve=preserve, goal=goal
+    )
+    batches = batch_calls(candidates, state_tokens, max_request_tokens)
+
+    def run_batch(batch: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+        questions: dict[str, Any] = {}
+        for call in batch:
+            questions.update(questions_for(call))
+        out = ask(state, questions, model, timeout=timeout)
+        ans = out.get("answers") or {}
+        return {
+            call["id"]: {
+                "keepCall": noul_value(ans, f"call_{call['id']}"),
+                "keepResult": noul_value(ans, f"result_{call['id']}"),
+            }
+            for call in batch
+        }
+
+    answers: dict[str, dict[str, float]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, max(1, len(batches)))) as ex:
+        for part in ex.map(run_batch, batches):
+            answers.update(part)
+    return answers, state_tokens, state_stage, len(batches)
+
+
+def score_calls(
+    openai_messages: list[dict[str, Any]],
+    candidate_ids: set[str],
+    *,
+    model: str = DEFAULT_MODEL,
+    preserve: int = 6,
+    max_state_tokens: int = 25_000,
+    max_request_tokens: int = 30_000,
+    goal: str = "",
+    timeout: float = 60,
+    ask=None,
+) -> dict[str, dict[str, float]]:
+    """Jev keep scores for the tool calls in ``candidate_ids``, keyed by tool_call_id.
+
+    The whole conversation is the decision state, so Jev judges each call in context. Used by the
+    Hermes context engine, which decides what to do with the scores itself. Raises JevError.
+    """
+    messages = from_openai(openai_messages)
+    calls = collect_tool_calls(messages, preserve)
+    candidates = [c for c in calls if c["tool_use_id"] in candidate_ids]
+    answers, *_ = _score(
+        messages, calls, candidates, model=model, preserve=preserve, max_state_tokens=max_state_tokens,
+        max_request_tokens=max_request_tokens, goal=goal, timeout=timeout, ask=ask,
+    )
+    return {c["tool_use_id"]: answers[c["id"]] for c in candidates if c["id"] in answers}
+
+
 def compact_messages(
     openai_messages: list[dict[str, Any]],
     *,
@@ -546,40 +616,10 @@ def compact_messages(
     candidates = [c for c in calls if not c["pinned"]]
     chars_before = sum(message_chars(m) for m in messages)
 
-    state_tokens = 0
-    state_stage = ""
-    requests = 0
-    answers: dict[str, dict[str, float]] = {}
-
-    if candidates:
-        state, state_tokens, state_stage = fit_state(
-            messages,
-            calls,
-            max_state_tokens=max_state_tokens,
-            preserve=preserve_recent,
-            goal=goal,
-        )
-        batches = batch_calls(candidates, state_tokens, max_request_tokens)
-        requests = len(batches)
-
-        def run_batch(batch: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
-            questions: dict[str, Any] = {}
-            for call in batch:
-                questions.update(questions_for(call))
-            # jev_ask expects state as JSON-serializable; pass the state object
-            out = jev_ask(state, questions, model)
-            ans = out.get("answers") or {}
-            local: dict[str, dict[str, float]] = {}
-            for call in batch:
-                local[call["id"]] = {
-                    "keepCall": noul_value(ans, f"call_{call['id']}"),
-                    "keepResult": noul_value(ans, f"result_{call['id']}"),
-                }
-            return local
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, max(1, len(batches)))) as ex:
-            for part in ex.map(run_batch, batches):
-                answers.update(part)
+    answers, state_tokens, state_stage, requests = _score(
+        messages, calls, candidates, model=model, preserve=preserve_recent,
+        max_state_tokens=max_state_tokens, max_request_tokens=max_request_tokens, goal=goal,
+    )
 
     decisions = []
     for call in calls:
