@@ -5,9 +5,9 @@ Why: mail triage is mostly if-statements. Doing it in Jev keeps full message bod
 main agent context (the real saving) and costs ~$0.00002 per message.
 
 Pipeline
-  1. list mail            -> google_api.py gmail search "<query>"
+  1. list mail            -> --input JSON file/stdin, or google_api.py gmail search "<query>"
   2. promo/social fastpath -> Gmail CATEGORY_* labels decide 'noise' with NO model call
-  3. body head            -> google_api.py gmail get <id> (plain text, truncated)
+  3. body head            -> the item's "body", or google_api.py gmail get <id> (truncated)
   4. one Jev call per mail: disposition (choice) + action_needed (noul) + has_deadline (noul)
   5. confidence < --min-confidence -> escalate=true (caller may spend a frontier model on it)
 
@@ -15,6 +15,11 @@ Outputs JSON (and optionally appends CSV) with a coverage + cost summary, so cro
 the result instead of re-reading the inbox into context.
 
 Usage
+  # any mail source: JSON array of {id, from, subject, date, labels?, snippet?, body?}
+  python3 jev_mail_triage.py --input mails.json --brief
+  some_exporter | python3 jev_mail_triage.py --input - --brief
+
+  # Gmail via the Google Workspace script (Hermes skill by default, override with JEV_GAPI)
   python3 jev_mail_triage.py --query "in:inbox newer_than:7d" --max 25 --out /tmp/triage.json --brief
 """
 
@@ -23,6 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 import time
@@ -31,7 +37,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jev_decide as jd  # noqa: E402  (shares key loading + HTTP path)
 
-GAPI = "/opt/data/skills/productivity/google-workspace/scripts/google_api.py"
+GAPI = os.environ.get(
+    "JEV_GAPI", "/opt/data/skills/productivity/google-workspace/scripts/google_api.py"
+)
 
 # Options live here (code/config), never invented by the model.
 # preset "inbox": what should the user do with this mail?
@@ -138,14 +146,28 @@ def list_mail(query: str, max_n: int) -> list[dict]:
     return out if isinstance(out, list) else []
 
 
+def load_input(path: str) -> list[dict]:
+    """Mail items from a JSON array file, or stdin when path is '-'."""
+    raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    if isinstance(data, dict) and isinstance(data.get("mails"), list):
+        data = data["mails"]
+    if not isinstance(data, list):
+        raise jd.JevError("--input must be a JSON array of mails (or {\"mails\": [...]})")
+    return [m for m in data if isinstance(m, dict)]
+
+
 def body_head(msg_id: str, chars: int) -> str:
     try:
         m = run_json(["python3", GAPI, "gmail", "get", msg_id])
     except Exception:
         return ""
     body = (m.get("body") or "") if isinstance(m, dict) else ""
-    body = " ".join(body.split())
-    return body[:chars]
+    return clip(body, chars)
+
+
+def clip(text: str, chars: int) -> str:
+    return " ".join(str(text).split())[:chars]
 
 
 def _noul(answers: dict, key: str) -> tuple[float | None, bool | None]:
@@ -198,10 +220,11 @@ def needs_attention(row: dict, preset: str) -> bool:
     return bool((sig.get("action_needed") or {}).get("yes"))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Jev mail triage")
     p.add_argument("--preset", choices=sorted(PRESETS), default="inbox")
-    p.add_argument("--query", default="in:inbox newer_than:7d")
+    p.add_argument("--input", help="JSON array of mails ('-' = stdin) instead of Gmail")
+    p.add_argument("--query", default="in:inbox newer_than:7d", help="Gmail query (ignored with --input)")
     p.add_argument("--max", type=int, default=25)
     p.add_argument("--body-chars", type=int, default=600)
     p.add_argument("--no-body", action="store_true", help="subject+snippet only (fewer calls)")
@@ -211,7 +234,7 @@ def main() -> int:
     p.add_argument("--out", default=None)
     p.add_argument("--csv", default=None, help="append per-mail rows to this CSV")
     p.add_argument("--brief", action="store_true")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     preset = PRESETS[args.preset]
     qs = preset["questions"]
@@ -221,7 +244,10 @@ def main() -> int:
 
     jd._load_key()  # fail fast (exit 2) instead of one error row per mail
     t0 = time.time()
-    mails = list_mail(args.query, args.max)
+    if args.input:
+        mails = load_input(args.input)[: args.max]
+    else:
+        mails = list_mail(args.query, args.max)
     rows: list[dict] = []
     cost_total = 0.0
     errors: list[str] = []
@@ -254,8 +280,13 @@ def main() -> int:
             "subject": m.get("subject"),
             "labels": labels,
             "date": m.get("date"),
-            "body": "" if args.no_body else body_head(str(m.get("id")), args.body_chars),
+            "body": "",
         }
+        if not args.no_body:
+            if args.input:
+                state["body"] = clip(m.get("body") or "", args.body_chars)
+            else:
+                state["body"] = body_head(str(m.get("id")), args.body_chars)
         if not state["body"]:
             state["snippet"] = (m.get("snippet") or "")[:400]
 
@@ -282,7 +313,7 @@ def main() -> int:
 
     result = {
         "preset": args.preset,
-        "query": args.query,
+        "query": None if args.input else args.query,
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "model": args.model,
         "mail_count": len(mails),
@@ -328,7 +359,7 @@ def main() -> int:
             print(f"{flag}{r['disposition']:8s} {r['confidence']:<5} {str(r['from'])[:26]:28s} "
                   f"{str(r['subject'])[:44]:46s} {sig}")
         if result["escalate"]:
-            print("escalate=" + ",".join(result["escalate"]))
+            print("escalate=" + ",".join(str(i) for i in result["escalate"]))
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

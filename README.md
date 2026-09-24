@@ -1,8 +1,20 @@
 # jev-hermes
 
-Tiny Hermes skill that calls **TypeSafe Jev** (System One) through OpenRouter’s Decisions API.
+Small, dependency-free Python CLIs that call **TypeSafe Jev** (System One) through OpenRouter’s Decisions API — usable from any agent, cron job or script. Ships as a [Hermes](#hermes-integration) skill too.
 
-Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. Use it to **route or gate** expensive Hermes agent turns.
+Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. Use it to **route or gate** expensive agent turns.
+
+## Quick start
+
+Requires Python ≥ 3.9 (standard library only) and an [OpenRouter](https://openrouter.ai) API key.
+
+```bash
+git clone https://github.com/de-niji/jev-hermes.git && cd jev-hermes
+export OPENROUTER_API_KEY=sk-or-...   # or put it in ./.env (see .env.example)
+
+python3 scripts/jev_decide.py --state "What's on my calendar tomorrow?" --preset intent --brief
+python3 scripts/jev_mail_triage.py --input examples/mails_sample.json --brief
+```
 
 ## Architecture: router, not memory
 
@@ -34,32 +46,14 @@ Jev does **not** replace a memory system (e.g. Honcho). Keep memory fully enable
 5. **In the loop, not beside it** — router (cheap model / skip tour) → gate (before tool runs) → judge (after output). Compaction is the cheap win tonight.
 6. **Compaction first for bills** — score tool pairs, drop dead ones, keep survivors **verbatim** (no lossy summary).
 
-Hermes mapping today: **router** = `intent` preset · **gate** = `approval` / `jev_mail_triage.py` · **compact** = `jev_compact.py`. Judge-after-tool is still ad-hoc (agent prompt / future preset).
-
-- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn  
-- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual  
-- Memory providers still **write** in the background either way  
+Mapping in this repo: **router** = `intent` preset · **gate** = `approval` / `jev_mail_triage.py` · **compact** = `jev_compact.py`. Judge-after-tool is not covered yet.
 
 Honest limits: text only (no images/audio). Wins on narrow, well-specified decisions — most of what an agent does all day — not on broad chat benchmarks.
-
-## Install on Hermes
-
-```bash
-git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
-# or update: cd ~/jev-hermes && git pull
-
-# copy into the Hermes skills tree (adjust if your HERMES_HOME differs):
-docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
-docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
-
-# OPENROUTER_API_KEY in the Hermes env / .env
-# optional: JEV_MODEL=typesafe/jev-1.13
-```
 
 ## CLI
 
 ```bash
-# from skill dir
+# from the repo root
 python3 scripts/jev_decide.py \
   --state "What's on my calendar tomorrow?" \
   --preset intent --brief
@@ -99,18 +93,32 @@ python3 scripts/jev_compact.py \
   --out /tmp/out.json
 ```
 
-Use when a Hermes session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes built-in summary.
+Input: a JSON array of OpenAI-style chat messages (or `{"messages": [...]}`). Use when a session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to your agent's built-in summary.
 
 ## Mail triage
 
-`scripts/jev_mail_triage.py` classifies Gmail via the Hermes Google Workspace skill. Options are fixed in code (`inbox` / `receipts` presets). Promo/social labels short-circuit with no model call. Bodies stay local (truncated) so they never enter the main agent context.
+`scripts/jev_mail_triage.py` makes one Jev decision per mail. Options are fixed in code (`inbox` / `receipts` presets). Gmail promo/social/forum labels short-circuit with no model call. Bodies are truncated locally so they never enter the main agent context.
+
+**Any mail source** — pass a JSON array (file or `-` for stdin). Only `subject` is really needed; `body` (or `snippet`) and `labels` help:
+
+```json
+[{"id": "m1", "from": "billing@example.com", "subject": "Invoice No. 10442", "date": "2026-09-20",
+  "labels": ["INBOX"], "body": "Please transfer 49.90 EUR by 2026-09-30."}]
+```
+
+```bash
+python3 scripts/jev_mail_triage.py --input examples/mails_sample.json --brief
+my_mail_exporter | python3 scripts/jev_mail_triage.py --input - --preset receipts --brief
+```
+
+**Gmail** — without `--input`, mail is listed and fetched through a Google Workspace script that prints JSON (`gmail search <query> --max N`, `gmail get <id>`). The default path is the Hermes Google Workspace skill; point `JEV_GAPI` at your own script elsewhere.
 
 ```bash
 python3 scripts/jev_mail_triage.py --preset inbox --query "newer_than:2d -in:chats" --max 20 --brief
 python3 scripts/jev_mail_triage.py --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
 ```
 
-Default output: `/tmp/jev_mail_triage/last_<preset>.json`. Mails whose Jev call fails are kept with `source=error` and listed in `escalate[]`, never dropped. Exit `2` on a missing API key. Wire into morning/finance crons on the host — **do not commit real inbox dumps or bench mail snapshots**.
+Output JSON (default `/tmp/jev_mail_triage/last_<preset>.json`): `rows[]`, `needs_attention[]`, `escalate[]` (confidence below `--min-confidence`, default 0.5, or a failed Jev call), `counts`, `cost_usd`. Mails whose Jev call fails are kept with `source=error`, never dropped. Exit `2` on a missing API key. **Do not commit real inbox dumps or mail snapshots.**
 
 Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main model ~73 s / ~$0.013. See `SKILL.md` for pitfalls (criteria must name concrete failure modes).
 
@@ -119,11 +127,39 @@ Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main 
 - `choice` options must be under `criteria` as a **record** (option → description). Arrays in `criteria` are for `score` only. Wrong shapes return HTTP 400.
 - Mail criteria: name concrete noise modes (device alerts, 2FA codes), not vague “automated notification”.
 
-## Hermes usage
+## Tests
 
-See `SKILL.md`. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
+Offline unit tests (standard library, no API key, no network) run in CI on every pull request:
 
-## Pairing with Honcho (optional host tips)
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## Hermes integration
+
+`SKILL.md` is the Hermes skill manifest. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
+
+- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn
+- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
+- Memory providers still **write** in the background either way
+
+### Install
+
+```bash
+git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
+# or update: cd ~/jev-hermes && git pull
+
+# copy into the Hermes skills tree (adjust if your HERMES_HOME differs):
+docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
+docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
+
+# OPENROUTER_API_KEY in the Hermes env / .env
+# optional: JEV_MODEL=typesafe/jev-1.13
+```
+
+The key is also read from `~/.hermes/.env` and `/opt/data/.env` when it is not in the environment.
+
+### Pairing with Honcho (optional host tips)
 
 Jev does not configure Honcho. On a Hermes host, the big token cost is usually **uncapped every-turn memory inject**, not the Jev gate.
 

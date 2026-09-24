@@ -78,7 +78,7 @@ python3 /opt/data/skills/devops/jev/scripts/jev_decide.py --state-file /tmp/mail
 
 One decision per message, options fixed in code, Gmail promo/social labels short-circuit to `noise`/`info` with **no model call**. Bodies are fetched and truncated locally so they never enter the main agent context.
 
-Requires Hermes Google Workspace skill (`google_api.py`) for Gmail list/get.
+Requires Hermes Google Workspace skill (`google_api.py`) for Gmail list/get (override the path with `JEV_GAPI`). Mail from any other source: `--input mails.json` (JSON array, `-` = stdin), no Gmail needed.
 
 Two presets: `inbox` (urgent_reply / reply / action_no_reply / waiting / reference / noise) and `receipts` (receipt / payment_issue / contract / info / unclear — gate before an expensive finance/PDF pipeline).
 
