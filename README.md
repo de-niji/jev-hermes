@@ -40,7 +40,7 @@ Optional: `JEV_MODEL` (default `typesafe/jev-1.13`), `JEV_GAPI` (path to the Goo
 - `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
 - Memory providers still **write** in the background either way
 
-Not automatic yet: per-turn routing and compaction still depend on the agent following the skill. Hooking them into Hermes directly (`pre_llm_call` hook, a context engine) is the next step.
+Not automatic yet: per-turn routing still depends on the agent following the skill. Hooking it into Hermes directly (`pre_llm_call` hook) is the next step.
 
 ## Risky-command gate (automatic)
 
@@ -66,6 +66,44 @@ plugins:
           fail_closed: false # on a Jev error/timeout: false = Hermes' own checks decide, true = ask the user
           timeout: 8         # seconds; keep well below plugins.hook_callback_timeout (a timed-out hook blocks)
 ```
+
+## Context engine (opt-in)
+
+Long sessions fill up with old tool output: files read before an edit, test runs before the fix, searches on a topic the user has left. Hermes' built-in compressor handles that with size rules (large outputs get shortened) and, once the context is full, an LLM summary of the older turns — which costs output tokens, takes time, and loses detail.
+
+The `jev` engine is Hermes' own compressor with **one step swapped**: before Hermes' no-LLM tool-output prune, Jev reads the whole conversation and answers, per older tool output, *does the assistant still need this verbatim?* Outputs it says no to become a one-line stub (`[jev-compact: earlier output of terminal (5400 chars) removed …; re-run the tool if you need it again]`). Then everything continues exactly as built in.
+
+- **Nothing is deleted**: every message stays, so tool calls keep their results and Hermes' session store sees the same structure it produces itself. User and assistant text is never touched.
+- **Protected tail**: the last `compression.protect_last_n` messages (and the tail token budget) are never touched; nor are `skill_view` outputs.
+- **Early prune**: the engine turns on Hermes' early prune (`compression.proactive_prune_tokens`, default 48000 unless you set it), so stale output is dropped long before the context is full — often the LLM summary is not needed at all. At full compaction, Jev runs first and the summary covers a smaller transcript.
+- **Fallback**: any Jev error or timeout → exactly Hermes' built-in behaviour for that step.
+
+Activate (Hermes never switches engines on its own), then restart:
+
+```yaml
+context:
+  engine: jev
+plugins:
+  entries:
+    jev:
+      settings:
+        compact:
+          keep_threshold: 0.5  # stub an output when Jev's keep probability is below this
+          min_chars: 800       # shorter outputs are not worth a question
+          timeout: 20          # seconds per Jev request
+          prune_tokens: 48000  # early-prune trigger when compression.proactive_prune_tokens is 0
+```
+
+Your other `compression.*` settings (threshold, protect_last_n, tail_mode, …) still apply. Each prune rewrites sent history, so it breaks the prompt-cache prefix once — Hermes' reclaim gate keeps those breaks episodic, same as the built-in prune.
+
+**Measure before trusting it.** `bench/compaction_bench.py` runs the engine's prune step on labelled synthetic sessions (bug fix, ops, research) where every tool output is marked *needed* or *stale*, and reports tokens saved and — the number that matters — **needed outputs wrongly stubbed**:
+
+```bash
+OPENROUTER_API_KEY=... python3 bench/compaction_bench.py   # real Jev
+python3 bench/compaction_bench.py --oracle                 # perfect answers: upper bound, no key
+```
+
+With perfect answers the three sessions save 33% of tokens with 0 wrong stubs; real Jev can only do worse. Real-Jev numbers are not in this README yet.
 
 ## Architecture: router, not memory
 
@@ -144,7 +182,7 @@ python3 scripts/jev_compact.py \
   --out /tmp/out.json
 ```
 
-Input: a JSON array of OpenAI-style chat messages (or `{"messages": [...]}`). Use when a Hermes session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes' built-in summary.
+Input: a JSON array of OpenAI-style chat messages (or `{"messages": [...]}`). In Hermes, prefer the [context engine](#context-engine-opt-in), which applies the same Jev scoring automatically. The CLI is for transcripts outside a live session. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes' built-in summary.
 
 ## Mail triage
 
@@ -214,7 +252,7 @@ Offline unit tests (standard library, no API key, no network) run in CI on every
 python3 -m unittest discover -s tests -v
 ```
 
-A second CI job installs [Hermes Agent](https://github.com/NousResearch/hermes-agent) at a pinned commit and checks the plugin against it: the install security scan must be `safe` (a single HIGH finding blocks `hermes plugins install`), the tools, skill and gate must register, and Hermes' real terminal dispatch must honour the gate (escalated command blocked without a human, Hermes-flagged command not double-checked, safe command runs). Locally, with Hermes installed: `python tests/hermes_integration.py`.
+A second CI job installs [Hermes Agent](https://github.com/NousResearch/hermes-agent) at a pinned commit and checks the plugin against it: the install security scan must be `safe` (a single HIGH finding blocks `hermes plugins install`), the tools, skill and gate must register, Hermes' real terminal dispatch must honour the gate (escalated command blocked without a human, Hermes-flagged command not double-checked, safe command runs), and `context.engine: jev` must select the engine, stub what Jev drops without removing messages, and fall back cleanly when Jev fails. Locally, with Hermes installed: `python tests/hermes_integration.py`.
 
 ## Privacy / ZDR
 

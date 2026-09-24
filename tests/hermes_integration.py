@@ -28,7 +28,8 @@ def main() -> int:
     os.environ["HERMES_HOME"] = str(home)
     os.environ["OPENROUTER_API_KEY"] = "test-key"
     shutil.copytree(ROOT, home / "plugins" / "jev", ignore=shutil.ignore_patterns(".git", "__pycache__"))
-    (home / "config.yaml").write_text("plugins:\n  enabled:\n    - jev\n", encoding="utf-8")
+    (home / "config.yaml").write_text(
+        "plugins:\n  enabled:\n    - jev\ncontext:\n  engine: jev\n", encoding="utf-8")
 
     # 1. `hermes plugins install` blocks community plugins unless the scan verdict is "safe".
     from tools.plugin_guard import scan_plugin
@@ -80,6 +81,63 @@ def main() -> int:
     check("BLOCKED" in out, "no human present: Hermes blocks the escalated command (fail closed)")
     out = handle_function_call("terminal", {"command": "echo jev-gate-ok"}, task_id="jev-it")
     check("jev-gate-ok" in out and "echo jev-gate-ok" in asked, "safe command runs after the Jev check")
+
+    # 5. context.engine: jev selects the Jev engine; its prune stubs what Jev drops, keeps structure,
+    #    and falls back to Hermes' built-in prune when Jev fails.
+    import copy
+    import json
+
+    import jev_compact
+    from agent.agent_init import _select_context_engine
+
+    def new_engine():
+        engine = _select_context_engine({"context": {"engine": "jev"}})
+        if engine is not None:
+            engine.update_model(model="anthropic/claude-sonnet-4", context_length=200_000, base_url="",
+                                api_key="", provider="openrouter", api_mode="")
+        return engine
+
+    engine = new_engine()
+    check(engine is not None and engine.name == "jev", "context.engine: jev selects the Jev engine")
+    msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "Fix the failing test"}]
+    for i in range(12):
+        cid = f"call_{i}"
+        msgs.append({"role": "assistant", "content": None, "tool_calls": [{
+            "id": cid, "type": "function",
+            "function": {"name": "terminal", "arguments": json.dumps({"command": f"cat f{i}.py"})}}]})
+        msgs.append({"role": "tool", "tool_call_id": cid, "content": f"# f{i}\n" + "x = 1\n" * 900})
+        msgs.append({"role": "assistant", "content": f"read f{i}"})
+    for i in range(25):
+        msgs += [{"role": "user", "content": f"step {i}"}, {"role": "assistant", "content": f"done {i}"}]
+
+    def fake_ask(state, questions, model, timeout=60):  # keep every third output
+        return {"answers": {k: {"type": "noul", "noul": 0.9 if int(k.split("_t")[1]) % 3 == 0 else 0.1}
+                            for k in questions}}
+
+    def paired(ms):
+        calls = {tc["id"] for m in ms for tc in (m.get("tool_calls") or [])}
+        return calls == {m["tool_call_id"] for m in ms if m.get("role") == "tool"}
+
+    jev_compact.jev_ask = fake_ask
+    out, n = engine.prune_tool_results_only(copy.deepcopy(msgs), current_tokens=60_000)
+    stubbed = [m["tool_call_id"] for m in out if m.get("role") == "tool"
+               and str(m.get("content", "")).startswith("[jev-compact:")]
+    check(len(stubbed) == 8 and "call_2" not in stubbed, f"early prune stubs what Jev drops (got {stubbed})")
+    check(len(out) == len(msgs) and paired(out), "no message removed, every tool call keeps its result")
+    check([m["content"] for m in out if m["role"] in ("user", "assistant")]
+          == [m["content"] for m in msgs if m["role"] in ("user", "assistant")], "user/assistant text verbatim")
+
+    def down(*a, **k):
+        raise jev_decide.JevError("request failed: timed out")
+    jev_compact.jev_ask = down
+    engine = new_engine()
+    try:
+        out, n = engine.prune_tool_results_only(copy.deepcopy(msgs), current_tokens=60_000)
+        ok = paired(out) and engine.jev_stats["errors"] == 1
+    except Exception as e:  # noqa: BLE001
+        ok = False
+        print("   raised:", e)
+    check(ok, "Jev down: falls back to Hermes' built-in prune without raising")
 
     shutil.rmtree(home, ignore_errors=True)
     print(f"\n{len(failures)} failure(s)")
