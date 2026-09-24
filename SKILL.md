@@ -1,7 +1,7 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage/compaction). Use to delete LLM calls that are just if-statements."
-version: 0.5.0
+version: 0.6.0
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
@@ -20,6 +20,8 @@ OpenRouter: `POST /api/alpha/decisions` · model `typesafe/jev-1.13`
 **Not a memory replacement.** Keep Honcho (or any memory provider) fully on. Jev only decides *whether this turn* needs a memory search / full agent loop.
 
 **Plugin tools first.** When the `jev` plugin is enabled (`hermes plugins install de-niji/jev-hermes --enable`), call the `jev_decide` and `jev_mail_triage` tools directly. The commands below are the fallback when only this skill is installed.
+
+With the plugin enabled, risky `terminal` commands are already checked automatically before they run (the `approval` preset via a `pre_tool_call` hook); you do not need to call `jev_decide --preset approval` yourself.
 
 Files (paths relative to this skill; `${HERMES_SKILL_DIR}` in the commands):
 `scripts/jev_decide.py` · `scripts/jev_mail_triage.py` · `scripts/jev_compact.py` · `examples/mail_sample.json` · `examples/mails_sample.json` · `examples/custom_questions.json` · `examples/compact_sample.json`

@@ -55,6 +55,32 @@ def main() -> int:
     for script in ("scripts/jev_decide.py", "scripts/jev_mail_triage.py", "scripts/jev_compact.py"):
         check(script in refs, f"SKILL.md references {script}")
 
+    # 4. The risky-command gate is honoured by Hermes' real terminal tool dispatch (fake Jev).
+    hooks = getattr(plugins.get_plugin_manager(), "_hooks", {}).get("pre_tool_call", [])
+    check(any(type(h).__name__ == "Gate" for h in hooks), "pre_tool_call gate registered")
+    import jev_decide
+    asked: list[str] = []
+
+    def fake_decide(state, questions, model, timeout=60):
+        asked.append(state["cmd"])
+        p = 0.95 if state["cmd"].startswith("kubectl") else 0.05
+        return {"answers": {"escalate": {"type": "noul", "noul": p},
+                            "risk": {"type": "score", "score": 2, "confidence": 0.9}}}
+
+    jev_decide.decide = fake_decide
+    from hermes_cli.plugins import _get_pre_tool_call_directive_details as directive
+    risky = directive("terminal", {"command": "kubectl delete namespace prod"})
+    check(risky.action == "approve" and (risky.rule_key or "").startswith("jev:"),
+          f"risky command escalated to the human gate (got {risky.action})")
+    builtin = directive("terminal", {"command": "git push --force origin main"})
+    check(builtin.action is None and "git push --force origin main" not in asked,
+          "command Hermes already flags is left to Hermes (no Jev call, no double prompt)")
+    from model_tools import handle_function_call
+    out = handle_function_call("terminal", {"command": "kubectl delete namespace prod"}, task_id="jev-it")
+    check("BLOCKED" in out, "no human present: Hermes blocks the escalated command (fail closed)")
+    out = handle_function_call("terminal", {"command": "echo jev-gate-ok"}, task_id="jev-it")
+    check("jev-gate-ok" in out and "echo jev-gate-ok" in asked, "safe command runs after the Jev check")
+
     shutil.rmtree(home, ignore_errors=True)
     print(f"\n{len(failures)} failure(s)")
     return 1 if failures else 0

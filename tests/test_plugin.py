@@ -24,7 +24,13 @@ def load_plugin_package():
 
 class FakeCtx:
     def __init__(self):
-        self.tools, self.skills = {}, {}
+        self.tools, self.skills, self.hooks = {}, {}, {}
+
+    def get_config(self, key, default=None):
+        return default
+
+    def register_hook(self, name, callback):
+        self.hooks.setdefault(name, []).append(callback)
 
     def register_tool(self, name, toolset, schema, handler, check_fn=None, emoji="", **_):
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler, "check_fn": check_fn}
@@ -55,6 +61,8 @@ class Register(unittest.TestCase):
             self.assertEqual(t["schema"]["name"], name)
             self.assertTrue(callable(t["check_fn"]))
         self.assertTrue(ctx.skills["jev"].is_file())
+        self.assertEqual(set(ctx.hooks), set(manifest_list("provides_hooks")))
+        self.assertEqual(len(ctx.hooks["pre_tool_call"]), 1)
 
     def test_check_fn_follows_key(self):
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "k"}):
