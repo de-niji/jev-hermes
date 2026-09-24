@@ -82,16 +82,19 @@ PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+# Checked in order when the key is not in the environment: repo .env, then Hermes locations.
+ENV_FILES: tuple[Path, ...] = (
+    Path(__file__).resolve().parents[1] / ".env",
+    Path.home() / ".hermes" / ".env",
+    Path("/opt/data/.env"),
+)
+
+
 def _load_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_TOKEN")
     if key:
         return key.strip()
-    # Hermes common locations
-    for p in (
-        Path("/opt/data/.env"),
-        Path.home() / ".hermes" / ".env",
-        Path(__file__).resolve().parents[1] / ".env",
-    ):
+    for p in ENV_FILES:
         if not p.is_file():
             continue
         for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():

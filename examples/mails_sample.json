@@ -1,0 +1,26 @@
+[
+  {
+    "id": "m1",
+    "from": "billing@example.com",
+    "subject": "Invoice No. 10442 — due by 2026-09-30",
+    "date": "2026-09-20",
+    "labels": ["INBOX"],
+    "body": "Please find attached the invoice for September. Kindly transfer 49.90 EUR by 2026-09-30."
+  },
+  {
+    "id": "m2",
+    "from": "alex@example.org",
+    "subject": "Can you review the draft by tomorrow?",
+    "date": "2026-09-21",
+    "labels": ["INBOX", "IMPORTANT"],
+    "body": "Hi, could you take a look at the attached draft and send me your comments by tomorrow noon?"
+  },
+  {
+    "id": "m3",
+    "from": "deals@shop.example",
+    "subject": "50% off everything this weekend",
+    "date": "2026-09-21",
+    "labels": ["INBOX", "CATEGORY_PROMOTIONS"],
+    "snippet": "Our biggest sale of the year starts now."
+  }
+]
