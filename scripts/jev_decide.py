@@ -16,6 +16,11 @@ DECISIONS_URL = os.environ.get(
     "JEV_DECISIONS_URL", "https://openrouter.ai/api/alpha/decisions"
 )
 
+
+class JevError(RuntimeError):
+    """API or config failure. CLIs exit 2 on this; batch callers catch it per item."""
+
+
 # Question shapes follow OpenRouter Decisions / TypeSafe System One docs.
 PRESETS: dict[str, dict[str, Any]] = {
     "intent": {
@@ -60,9 +65,9 @@ PRESETS: dict[str, dict[str, Any]] = {
             "type": "choice",
             "instructions": "Classify this email for a personal-assistant morning brief.",
             "criteria": {
-                "invoice": "Rechnung, invoice, payment due, Zahlungsaufforderung",
-                "deadline": "Frist, deadline, Anmeldung, Prüfungsanmeldung, due date",
-                "contract": "Vertrag, contract, NDA, agreement to sign",
+                "invoice": "Invoice, bill, payment due, payment request",
+                "deadline": "Deadline, due date, registration or exam sign-up with a cutoff",
+                "contract": "Contract, NDA, agreement to sign",
                 "ignore": "Newsletter, promo, social, no action needed",
                 "other": "Personal or work mail that is none of the above",
             },
@@ -96,7 +101,7 @@ def _load_key() -> str:
             k, _, v = line.partition("=")
             if k.strip() in ("OPENROUTER_API_KEY", "OPENROUTER_API_TOKEN"):
                 return v.strip().strip('"').strip("'")
-    raise SystemExit("OPENROUTER_API_KEY missing (env or .env)")
+    raise JevError("OPENROUTER_API_KEY missing (env or .env)")
 
 
 def _read_state(args: argparse.Namespace) -> Any:
@@ -107,7 +112,7 @@ def _read_state(args: argparse.Namespace) -> Any:
         except json.JSONDecodeError:
             return raw
     if args.state is None:
-        raise SystemExit("need --state or --state-file")
+        raise JevError("need --state or --state-file")
     text = args.state
     if text.startswith("{") or text.startswith("["):
         try:
@@ -122,9 +127,9 @@ def _read_questions(args: argparse.Namespace) -> dict[str, Any]:
         return json.loads(Path(args.questions_file).read_text(encoding="utf-8"))
     if args.preset:
         if args.preset not in PRESETS:
-            raise SystemExit(f"unknown preset {args.preset}; choose {list(PRESETS)}")
+            raise JevError(f"unknown preset {args.preset}; choose {list(PRESETS)}")
         return PRESETS[args.preset]
-    raise SystemExit("need --preset or --questions-file")
+    raise JevError("need --preset or --questions-file")
 
 
 def decide(state: Any, questions: dict[str, Any], model: str) -> dict[str, Any]:
@@ -146,7 +151,11 @@ def decide(state: Any, questions: dict[str, Any], model: str) -> dict[str, Any]:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         err = e.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"HTTP {e.code}: {err}") from e
+        raise JevError(f"HTTP {e.code}: {err}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise JevError(f"request failed: {e}") from e
+    except json.JSONDecodeError as e:
+        raise JevError(f"invalid JSON response: {e}") from e
 
 
 def _brief(out: dict[str, Any]) -> str:
@@ -221,5 +230,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except JevError as e:
+        print(e, file=sys.stderr)
+        sys.exit(2)
     except BrokenPipeError:
         sys.exit(0)

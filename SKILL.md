@@ -1,7 +1,7 @@
 ---
 name: jev
 description: "Fast typed decisions via TypeSafe Jev on OpenRouter (intent/approval/mail triage/compaction). Use to delete LLM calls that are just if-statements."
-version: 0.3.0
+version: 0.4.0
 author: jev-hermes contributors
 license: MIT
 platforms: [linux, macos, windows]
@@ -80,7 +80,7 @@ One decision per message, options fixed in code, Gmail promo/social labels short
 
 Requires Hermes Google Workspace skill (`google_api.py`) for Gmail list/get.
 
-Two presets: `inbox` (urgent_reply / reply / action_no_reply / waiting / reference / noise) and `belege` (beleg / mahnung / vertrag / info / unclear — gate before an expensive finance/PDF pipeline).
+Two presets: `inbox` (urgent_reply / reply / action_no_reply / waiting / reference / noise) and `receipts` (receipt / payment_issue / contract / info / unclear — gate before an expensive finance/PDF pipeline).
 
 ```bash
 python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
@@ -88,13 +88,14 @@ python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
   --out /tmp/jev_mail_triage/last_inbox.json --brief
 
 python3 /opt/data/skills/devops/jev/scripts/jev_mail_triage.py \
-  --preset belege --query "newer_than:14d -in:chats" --max 30 --brief
+  --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
 ```
 
 - Output JSON: `rows[]`, `needs_attention[]`, `escalate[]` (conf &lt; `--min-confidence`, default 0.5), `counts`, `cost_usd`.
-- `source=label_fastpath` rows cost nothing; `source=jev` rows ~$0.00002 each.
+- `source=label_fastpath` rows cost nothing; `source=jev` rows ~$0.00002 each; `source=error` rows (Jev call failed) are always in `escalate[]`.
+- `needs_attention[]` always includes action dispositions (`urgent_reply` / `reply` / `action_no_reply`, or `receipt` / `payment_issue` / `contract`), plus rows whose noul signals say so.
 - Callers should only escalate `escalate[]` ids to a frontier model — that is the cheap hybrid.
-- `--preset belege` also catches receipts with **no PDF attachment** (inline invoices) that a `has:attachment filename:pdf` scan misses.
+- `--preset receipts` also catches receipts with **no PDF attachment** (inline invoices) that a `has:attachment filename:pdf` scan misses.
 
 ### Measured A/B (scrubbed)
 

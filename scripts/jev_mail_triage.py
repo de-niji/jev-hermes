@@ -36,25 +36,34 @@ GAPI = "/opt/data/skills/productivity/google-workspace/scripts/google_api.py"
 # Options live here (code/config), never invented by the model.
 # preset "inbox": what should the user do with this mail?
 DISPOSITIONS: dict[str, str] = {
-    "urgent_reply": "Deadline/Geld/Sicherheit/Blocker heute, oder Anfrage von Chef, Prof, Kunde, Partner",
-    "reply": "Direkte Frage oder Bitte an den User, Antwort noetig, aber nicht heute",
-    "action_no_reply": "Zahlung, Termin, Anmeldung, Kuendigung, Vertrag, Rechnung: Handlung ohne Antwort",
-    "waiting": "Der User hat schon geantwortet, die andere Seite ist am Zug",
-    "reference": "Info, Beleg, Rechnung zur Ablage, Vertragsdokument: keine Handlung",
+    "urgent_reply": (
+        "Deadline, money, security or a blocker due today, or a request from a boss, professor, "
+        "client or partner"
+    ),
+    "reply": "Direct question or request to the user; needs an answer, but not today",
+    "action_no_reply": (
+        "Payment, appointment, registration, cancellation, contract, invoice: "
+        "the user must act, no reply needed"
+    ),
+    "waiting": "The user already replied; the other side has to respond",
+    "reference": "Info, receipt, invoice to file, contract document: no action",
     "noise": (
-        "Newsletter, Werbung, Social, sowie automatische System-/Geraetemeldung (Tuer, Sensor, Kamera, "
-        "Home Assistant), Bestaetigungs-/Login-/2FA-Code, Sicherheitshinweis zu einem eigenen Login: "
-        "kein Handlungsbedarf"
+        "Newsletter, marketing, social, automated system/device alert (door, sensor, camera, "
+        "Home Assistant), confirmation/login/2FA code, security notice about the user's own login: "
+        "no action"
     ),
 }
 
-# preset "belege": is this mail worth the expensive PDF/HTML -> register row pipeline?
-BELEG_KINDS: dict[str, str] = {
-    "beleg": "Rechnung, Invoice, Receipt, Quittung, Kassenbon, Zahlungsbeleg mit Betrag",
-    "mahnung": "Mahnung, Zahlungserinnerung, fehlgeschlagene Zahlung, Zahlungsproblem",
-    "vertrag": "Vertrag, Abo, Mitgliedschaft, Versicherung, Kuendigung, Vertragsverlaengerung",
-    "info": "Newsletter, Werbung, Sicherheits-/Versand-/Konto-Info, AGB, Datenschutz: kein Beleg",
-    "unclear": "Aus Betreff und Body-Anfang nicht entscheidbar",
+# preset "receipts": is this mail worth the expensive PDF/HTML -> finance register pipeline?
+RECEIPT_KINDS: dict[str, str] = {
+    "receipt": "Invoice, receipt, bill, payment confirmation with an amount",
+    "payment_issue": "Dunning letter, payment reminder, failed payment, payment problem",
+    "contract": "Contract, subscription, membership, insurance, cancellation, renewal",
+    "info": (
+        "Newsletter, marketing, security/shipping/account notice, terms of service, privacy policy: "
+        "no receipt"
+    ),
+    "unclear": "Cannot tell from the subject and the start of the body",
 }
 
 PRESETS: dict[str, dict[str, dict]] = {
@@ -78,35 +87,35 @@ PRESETS: dict[str, dict[str, dict]] = {
             "has_deadline": {
                 "type": "noul",
                 "instructions": "Does the mail contain a concrete date or deadline the user must track?",
-                "true": "Explicit date/deadline/Frist present",
+                "true": "Explicit date or deadline present",
                 "false": "No explicit date",
             },
         },
     },
-    "belege": {
-        "disposition": BELEG_KINDS,
+    "receipts": {
+        "disposition": RECEIPT_KINDS,
         "questions": {
             "disposition": {
                 "type": "choice",
                 "instructions": (
-                    "The user files Belege (invoices/receipts) into a finance register. Does this mail "
+                    "The user files invoices and receipts into a finance register. Does this mail "
                     "contain a document that belongs there, or is it marketing/admin noise? "
                     "A real amount owed or paid beats the sender's marketing wording. "
                     "'info' includes security alerts and account notifications, even from real vendors."
                 ),
-                "criteria": BELEG_KINDS,
+                "criteria": RECEIPT_KINDS,
             },
             "money_relevant": {
                 "type": "noul",
                 "instructions": "Does the mail state a concrete amount, or confirm/announce a payment?",
-                "true": "Betrag, Summe, Amount, gezahlter/offener Betrag erkennbar",
-                "false": "Kein Geldbetrag",
+                "true": "An amount, total, or paid/outstanding sum is stated",
+                "false": "No amount of money",
             },
             "has_attachment": {
                 "type": "noul",
                 "instructions": "Does the mail appear to carry a PDF/invoice attachment (or inline invoice table)?",
-                "true": "Anhang oder eingebettete Rechnung vorhanden",
-                "false": "Kein Anhang",
+                "true": "Attachment or embedded invoice present",
+                "false": "No attachment",
             },
         },
     },
@@ -172,11 +181,18 @@ def answers_brief(answers: dict) -> tuple[str, float, dict[str, dict]]:
     return disp, conf, signals
 
 
+# Dispositions that always need the user, whatever the noul signals say.
+ATTENTION: dict[str, tuple[str, ...]] = {
+    "inbox": ("urgent_reply", "reply", "action_no_reply"),
+    "receipts": ("receipt", "payment_issue", "contract"),
+}
+
+
 def needs_attention(row: dict, preset: str) -> bool:
+    if row["disposition"] in ATTENTION[preset]:
+        return True
     sig = row.get("signals") or {}
-    if preset == "belege":
-        if row["disposition"] in ("beleg", "mahnung", "vertrag"):
-            return True
+    if preset == "receipts":
         money = (sig.get("money_relevant") or {}).get("yes")
         return bool(money) and row["disposition"] != "info"
     return bool((sig.get("action_needed") or {}).get("yes"))
@@ -203,6 +219,7 @@ def main() -> int:
     if args.out is None:
         args.out = f"/tmp/jev_mail_triage/last_{args.preset}.json"
 
+    jd._load_key()  # fail fast (exit 2) instead of one error row per mail
     t0 = time.time()
     mails = list_mail(args.query, args.max)
     rows: list[dict] = []
@@ -244,8 +261,10 @@ def main() -> int:
 
         try:
             out = jd.decide(state, qs, args.model)
-        except SystemExit as e:
+        except jd.JevError as e:
+            # Unclassified mail must not vanish: flag it for the caller's fallback path.
             errors.append(f"{m.get('id')}: {e}")
+            row.update(escalate=True, source="error")
             rows.append(row)
             continue
 
@@ -316,4 +335,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except jd.JevError as e:
+        print(e, file=sys.stderr)
+        sys.exit(2)

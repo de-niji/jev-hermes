@@ -20,7 +20,7 @@ from typing import Any
 
 # Reuse auth + HTTP from sibling script
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from jev_decide import _load_key, decide as jev_ask  # noqa: E402
+from jev_decide import JevError, _load_key, decide as jev_ask  # noqa: E402
 
 DEFAULT_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
 
@@ -698,5 +698,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except JevError as e:
+        print(e, file=sys.stderr)
+        sys.exit(2)
     except BrokenPipeError:
         sys.exit(0)

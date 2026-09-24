@@ -78,7 +78,7 @@ python3 scripts/jev_decide.py \
   --questions-file examples/custom_questions.json
 ```
 
-Exit codes: `0` ok · `2` API/config error · `3` low confidence (when `--min-confidence` set)
+Exit codes: `0` ok · `2` API/config error (HTTP, network, missing key) · `3` low confidence (when `--min-confidence` set)
 
 ## Presets
 
@@ -86,7 +86,7 @@ Exit codes: `0` ok · `2` API/config error · `3` low confidence (when `--min-co
 |--------|-----|
 | `intent` | Route: calendar / mail / status / research / complex |
 | `approval` | Is this shell command risky enough to escalate? |
-| `mail_triage` | Invoice / deadline / contract / ignore |
+| `mail_triage` | Invoice / deadline / contract / ignore / other |
 
 ## Compaction (tool history)
 
@@ -103,14 +103,14 @@ Use when a Hermes session is long and full of old tool dumps. If `--min-reductio
 
 ## Mail triage
 
-`scripts/jev_mail_triage.py` classifies Gmail via the Hermes Google Workspace skill. Options are fixed in code (`inbox` / `belege` presets). Promo/social labels short-circuit with no model call. Bodies stay local (truncated) so they never enter the main agent context.
+`scripts/jev_mail_triage.py` classifies Gmail via the Hermes Google Workspace skill. Options are fixed in code (`inbox` / `receipts` presets). Promo/social labels short-circuit with no model call. Bodies stay local (truncated) so they never enter the main agent context.
 
 ```bash
 python3 scripts/jev_mail_triage.py --preset inbox --query "newer_than:2d -in:chats" --max 20 --brief
-python3 scripts/jev_mail_triage.py --preset belege --query "newer_than:14d -in:chats" --max 30 --brief
+python3 scripts/jev_mail_triage.py --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
 ```
 
-Default output: `/tmp/jev_mail_triage/last_<preset>.json`. Wire into morning/finance crons on the host — **do not commit real inbox dumps or bench mail snapshots**.
+Default output: `/tmp/jev_mail_triage/last_<preset>.json`. Mails whose Jev call fails are kept with `source=error` and listed in `escalate[]`, never dropped. Exit `2` on a missing API key. Wire into morning/finance crons on the host — **do not commit real inbox dumps or bench mail snapshots**.
 
 Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main model ~73 s / ~$0.013. See `SKILL.md` for pitfalls (criteria must name concrete failure modes).
 
