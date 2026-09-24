@@ -1,20 +1,32 @@
 # jev-hermes
 
-Small, dependency-free Python CLIs that call **TypeSafe Jev** (System One) through OpenRouter’s Decisions API — usable from any agent, cron job or script. Ships as a [Hermes](#hermes-integration) skill too.
+**TypeSafe Jev for [Hermes Agent](https://github.com/NousResearch/hermes-agent).** A drop-in Hermes skill that hands cheap, typed decisions to Jev (System One) through OpenRouter’s Decisions API — so the expensive model only runs when it has to.
 
-Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. Use it to **route or gate** expensive agent turns.
+Jev does **not** chat or write code. It answers typed questions (`noul` / `choice` / `score`) about a `state` and returns calibrated probabilities. In Hermes it **routes** turns before the agent loop, **gates** risky commands, **compacts** old tool output and **triages** mail.
 
-## Quick start
-
-Requires Python ≥ 3.9 (standard library only) and an [OpenRouter](https://openrouter.ai) API key.
+## Install in Hermes
 
 ```bash
-git clone https://github.com/de-niji/jev-hermes.git && cd jev-hermes
-export OPENROUTER_API_KEY=sk-or-...   # or put it in ./.env (see .env.example)
+git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
+# or update: cd ~/jev-hermes && git pull
 
-python3 scripts/jev_decide.py --state "What's on my calendar tomorrow?" --preset intent --brief
-python3 scripts/jev_mail_triage.py --input examples/mails_sample.json --brief
+# copy into the Hermes skills tree (adjust if your HERMES_HOME differs):
+docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
+docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
+
+# OPENROUTER_API_KEY in the Hermes env / .env
+# optional: JEV_MODEL=typesafe/jev-1.13
 ```
+
+The key is also read from `~/.hermes/.env` and `/opt/data/.env` when it is not in the environment.
+
+## How Hermes uses it
+
+`SKILL.md` is the skill manifest Hermes loads; it tells the agent when to call which script. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
+
+- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn
+- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
+- Memory providers still **write** in the background either way
 
 ## Architecture: router, not memory
 
@@ -93,13 +105,20 @@ python3 scripts/jev_compact.py \
   --out /tmp/out.json
 ```
 
-Input: a JSON array of OpenAI-style chat messages (or `{"messages": [...]}`). Use when a session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to your agent's built-in summary.
+Input: a JSON array of OpenAI-style chat messages (or `{"messages": [...]}`). Use when a Hermes session is long and full of old tool dumps. If `--min-reduction` is not met, exit code `4` — keep the original transcript or fall back to Hermes' built-in summary.
 
 ## Mail triage
 
 `scripts/jev_mail_triage.py` makes one Jev decision per mail. Options are fixed in code (`inbox` / `receipts` presets). Gmail promo/social/forum labels short-circuit with no model call. Bodies are truncated locally so they never enter the main agent context.
 
-**Any mail source** — pass a JSON array (file or `-` for stdin). Only `subject` is really needed; `body` (or `snippet`) and `labels` help:
+**Gmail (default)** — mail is listed and fetched through the Hermes Google Workspace skill (`google_api.py gmail search` / `gmail get`). Point `JEV_GAPI` at a different script if yours lives elsewhere.
+
+```bash
+python3 scripts/jev_mail_triage.py --preset inbox --query "newer_than:2d -in:chats" --max 20 --brief
+python3 scripts/jev_mail_triage.py --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
+```
+
+**Other mail sources** — pass a JSON array (file or `-` for stdin). Only `subject` is really needed; `body` (or `snippet`) and `labels` help:
 
 ```json
 [{"id": "m1", "from": "billing@example.com", "subject": "Invoice No. 10442", "date": "2026-09-20",
@@ -111,13 +130,6 @@ python3 scripts/jev_mail_triage.py --input examples/mails_sample.json --brief
 my_mail_exporter | python3 scripts/jev_mail_triage.py --input - --preset receipts --brief
 ```
 
-**Gmail** — without `--input`, mail is listed and fetched through a Google Workspace script that prints JSON (`gmail search <query> --max N`, `gmail get <id>`). The default path is the Hermes Google Workspace skill; point `JEV_GAPI` at your own script elsewhere.
-
-```bash
-python3 scripts/jev_mail_triage.py --preset inbox --query "newer_than:2d -in:chats" --max 20 --brief
-python3 scripts/jev_mail_triage.py --preset receipts --query "newer_than:14d -in:chats" --max 30 --brief
-```
-
 Output JSON (default `/tmp/jev_mail_triage/last_<preset>.json`): `rows[]`, `needs_attention[]`, `escalate[]` (confidence below `--min-confidence`, default 0.5, or a failed Jev call), `counts`, `cost_usd`. Mails whose Jev call fails are kept with `source=error`, never dropped. Exit `2` on a missing API key. **Do not commit real inbox dumps or mail snapshots.**
 
 Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main model ~73 s / ~$0.013. See `SKILL.md` for pitfalls (criteria must name concrete failure modes).
@@ -127,39 +139,7 @@ Aggregate A/B (20-mail frozen snapshot): Jev ~8.6 s / ~$0.0007 vs per-mail main 
 - `choice` options must be under `criteria` as a **record** (option → description). Arrays in `criteria` are for `score` only. Wrong shapes return HTTP 400.
 - Mail criteria: name concrete noise modes (device alerts, 2FA codes), not vague “automated notification”.
 
-## Tests
-
-Offline unit tests (standard library, no API key, no network) run in CI on every pull request:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-## Hermes integration
-
-`SKILL.md` is the Hermes skill manifest. Pattern: call Jev first on short user text; only start the full agent loop when `intent=complex` or confidence is low.
-
-- `route=calendar|mail|status` → config + flat tools only; **no** memory search spam that turn
-- `route=complex` / people / prefs / “what did we…” → memory + normal agent as usual
-- Memory providers still **write** in the background either way
-
-### Install
-
-```bash
-git clone https://github.com/de-niji/jev-hermes.git ~/jev-hermes
-# or update: cd ~/jev-hermes && git pull
-
-# copy into the Hermes skills tree (adjust if your HERMES_HOME differs):
-docker cp ~/jev-hermes/. hermes:/opt/data/skills/devops/jev/
-docker exec -u 0 hermes chown -R 10000:1000 /opt/data/skills/devops/jev
-
-# OPENROUTER_API_KEY in the Hermes env / .env
-# optional: JEV_MODEL=typesafe/jev-1.13
-```
-
-The key is also read from `~/.hermes/.env` and `/opt/data/.env` when it is not in the environment.
-
-### Pairing with Honcho (optional host tips)
+## Hermes host tips: pairing with Honcho
 
 Jev does not configure Honcho. On a Hermes host, the big token cost is usually **uncapped every-turn memory inject**, not the Jev gate.
 
@@ -174,6 +154,26 @@ Recommended host knobs (in your local `honcho.json` — **do not commit personal
 | `dialecticReasoningLevel` | `minimal` | Cheap dialectic |
 
 Keep `recallMode: hybrid` if you still want tools on `complex` turns. Live PA routing notes stay on the host workspace, not in this repo.
+
+## Use without Hermes
+
+The scripts are plain Python ≥ 3.9 (standard library only), so they also run outside Hermes — from a cron job, another agent or a shell. You need an [OpenRouter](https://openrouter.ai) API key.
+
+```bash
+git clone https://github.com/de-niji/jev-hermes.git && cd jev-hermes
+export OPENROUTER_API_KEY=sk-or-...   # or put it in ./.env (see .env.example)
+
+python3 scripts/jev_decide.py --state "What's on my calendar tomorrow?" --preset intent --brief
+python3 scripts/jev_mail_triage.py --input examples/mails_sample.json --brief
+```
+
+## Tests
+
+Offline unit tests (standard library, no API key, no network) run in CI on every pull request:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## Privacy / ZDR
 
